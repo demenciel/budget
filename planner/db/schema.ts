@@ -82,6 +82,8 @@ export const records = sqliteTable(
     savedCents: integer('saved_cents').notNull().default(0),
     sourceId: text('source_id'),
     occurrenceDate: text('occurrence_date'),
+    relatedRecordId: text('related_record_id'),
+    relatedOccurrenceDate: text('related_occurrence_date'),
     completed: integer('completed').notNull().default(0),
     remindDays: integer('remind_days').notNull().default(3),
     secondDay: integer('second_day').notNull().default(15),

@@ -15,6 +15,13 @@
       "when": 1788965341953,
       "tag": "0001_colossal_the_hunter",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789428260187,
+      "tag": "0002_quiet_texas_twister",
+      "breakpoints": true
     }
   ]
 }

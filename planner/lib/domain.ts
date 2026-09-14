@@ -54,6 +54,8 @@ export type RecordItem = {
   saved_cents: number;
   source_id: string | null;
   occurrence_date: string | null;
+  related_record_id?: string | null;
+  related_occurrence_date?: string | null;
   completed: number;
   remind_days: number;
   created_at: string;
@@ -613,6 +615,14 @@ export function validateRecord(
     saved_cents: saved,
     source_id: null,
     occurrence_date: null,
+    related_record_id:
+      kind === 'settlement' && typeof input.related_record_id === 'string'
+        ? input.related_record_id || null
+        : null,
+    related_occurrence_date:
+      kind === 'settlement' && dateValid(input.related_occurrence_date)
+        ? input.related_occurrence_date
+        : null,
     completed: input.completed === true ? 1 : 0,
     remind_days: remind,
     second_day: secondDay,

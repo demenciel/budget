@@ -10,7 +10,7 @@ import {
   type Database,
   type Statement,
 } from '../lib/service.ts';
-import { today, addDays, jointSummary } from '../lib/domain.ts';
+import { today, addDays, jointSummary, reimbursement } from '../lib/domain.ts';
 class Sqlite implements Database {
   raw = new DatabaseSync(':memory:');
   constructor() {
@@ -269,6 +269,68 @@ void test('payment occurrence is unique and removing its transaction reopens it'
     payer_id: a.id,
   });
   assert.equal((await loadNotebook(db, a)).records.length, 2);
+  db.raw.close();
+});
+void test('a debtor can link a transfer to the bill payment it settles', async () => {
+  const { db, a, c } = await household();
+  await save(db, alex, {
+    ...expense,
+    kind: 'bill',
+    amount: '100',
+    scope: 'shared',
+    payer_id: a.id,
+  });
+  const bill = (await loadNotebook(db, a)).records[0];
+  await handleAction(db, alex, {
+    action: 'pay',
+    id: bill.id,
+    date: today(),
+    payer_id: a.id,
+  });
+  const payment = (await loadNotebook(db, c)).records.find(
+    (r) => r.kind === 'transaction',
+  )!;
+  await save(db, cheryl, {
+    kind: 'settlement',
+    title: 'Bill transfer',
+    amount: '50',
+    date: today(),
+    scope: 'shared',
+    payer_id: c.id,
+    related_record_id: payment.id,
+    related_occurrence_date: payment.occurrence_date,
+  });
+  const book = await loadNotebook(db, a);
+  const transfer = book.records.find((r) => r.kind === 'settlement')!;
+  assert.equal(transfer.related_record_id, payment.id);
+  assert.equal(reimbursement(book.records, a), 0);
+  assert.equal(reimbursement(book.records, c), 0);
+  await assert.rejects(
+    () =>
+      save(db, cheryl, {
+        kind: 'settlement',
+        title: 'Duplicate transfer',
+        amount: '1',
+        date: today(),
+        scope: 'shared',
+        payer_id: c.id,
+        related_record_id: payment.id,
+      }),
+    /exceeds/,
+  );
+  await assert.rejects(
+    () =>
+      save(db, alex, {
+        kind: 'settlement',
+        title: 'Self reimbursement',
+        amount: '1',
+        date: today(),
+        scope: 'shared',
+        payer_id: a.id,
+        related_record_id: payment.id,
+      }),
+    /themself/,
+  );
   db.raw.close();
 });
 void test('monthly budget uniqueness is enforced separately for shared and each private owner', async () => {

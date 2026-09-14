@@ -9,6 +9,7 @@ import {
   events,
   icsExport,
   cents,
+  myShare,
   today,
   addDays,
 } from './domain.ts';
@@ -521,6 +522,11 @@ export async function handleAction(
         .bind(existing.id, member.household_id),
       db
         .prepare(
+          'UPDATE records SET related_record_id=NULL WHERE related_record_id=? AND household_id=?',
+        )
+        .bind(existing.id, member.household_id),
+      db
+        .prepare(
           'DELETE FROM records WHERE id=? AND household_id=? AND (owner_id IS NULL OR owner_id=?)',
         )
         .bind(existing.id, member.household_id, member.id),
@@ -572,6 +578,37 @@ export async function handleAction(
       notebook.members,
       notebook.categories,
     );
+    if (data.kind === 'settlement' && data.related_record_id) {
+      const expense = notebook.records.find(
+        (r) =>
+          r.id === data.related_record_id &&
+          r.kind === 'transaction' &&
+          !r.owner_id &&
+          r.account !== 'joint',
+      );
+      if (!expense)
+        throw new HttpError(
+          'The expense linked to this transfer was not found.',
+        );
+      if (data.payer_id === expense.payer_id)
+        throw new HttpError(
+          'The person who paid the expense cannot reimburse themself.',
+        );
+      const sender = notebook.members.find((m) => m.id === data.payer_id)!;
+      const alreadyPaid = notebook.records
+        .filter(
+          (r) =>
+            r.id !== existing?.id &&
+            r.kind === 'settlement' &&
+            r.related_record_id === expense.id &&
+            r.payer_id === data.payer_id,
+        )
+        .reduce((sum, r) => sum + r.amount_cents, 0);
+      if (alreadyPaid + data.amount_cents > myShare(expense, sender))
+        throw new HttpError(
+          'This transfer exceeds the amount owed for that expense.',
+        );
+    }
     if (
       data.account === 'joint' &&
       data.date < (notebook.household.joint_opening_date ?? data.date)

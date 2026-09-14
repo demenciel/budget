@@ -233,6 +233,8 @@ const inputRecord = (r: RecordItem) => ({
   account: r.account ?? 'personal',
   payment_method: r.payment_method ?? 'debit',
   spending_bucket: r.spending_bucket ?? 'fixed',
+  related_record_id: r.related_record_id ?? '',
+  related_occurrence_date: r.related_occurrence_date ?? '',
 });
 export type Draft = ReturnType<typeof inputRecord>;
 export default function Planner() {
@@ -254,6 +256,7 @@ export default function Planner() {
     [paymentDate, setPaymentDate] = useState(today()),
     [horizon, setHorizon] = useState('30'),
     [search, setSearch] = useState(''),
+    [balanceActivity, setBalanceActivity] = useState(false),
     [invite, setInvite] = useState(''),
     [exportScope, setExportScope] = useState('shared');
   const refresh = useCallback(async () => {
@@ -328,6 +331,8 @@ export default function Planner() {
             account: 'personal',
             payment_method: 'debit',
             spending_bucket: 'fixed',
+            related_record_id: '',
+            related_occurrence_date: '',
             amount: '',
             date: kind === 'budget' ? month + '-01' : today(),
             end_date: '',
@@ -429,6 +434,16 @@ export default function Planner() {
   const upcoming = due.filter((e) => e.date >= currentDate);
   const transactions = filtered.filter(
     (r) => r.kind === 'transaction' && r.date.startsWith(month),
+  );
+  const transactionRows = (
+    balanceActivity ? (data?.records ?? []) : filtered
+  ).filter(
+    (r) =>
+      ['transaction', 'settlement'].includes(r.kind) &&
+      (balanceActivity
+        ? !r.owner_id && r.account !== 'joint'
+        : r.date.startsWith(month)) &&
+      `${r.title} ${r.note}`.toLowerCase().includes(search.toLowerCase()),
   );
   const amountFor = (r: RecordItem) =>
     scope === 'all' && data ? myShare(r, data.member) : r.amount_cents;
@@ -533,6 +548,7 @@ export default function Planner() {
               onClick={() => {
                 setView(label);
                 setSearch('');
+                setBalanceActivity(false);
               }}
             >
               <Icon size={19} />
@@ -667,39 +683,46 @@ export default function Planner() {
               </div>
               {!['Settings', 'Household rhythm'].includes(view) && (
                 <div className="toolbar">
-                  <Tabs
-                    value={scope}
-                    onValueChange={(v) => setScope(String(v))}
-                  >
-                    <TabsList>
-                      <TabsTrigger value="all">My overview</TabsTrigger>
-                      <TabsTrigger value="shared">Shared</TabsTrigger>
-                      <TabsTrigger value="mine">
-                        Mine <LockKeyhole size={12} />
-                      </TabsTrigger>
-                    </TabsList>
-                  </Tabs>
-                  {!['Cash flow', 'Savings goals'].includes(view) && (
-                    <div className="month-switch">
-                      <button
-                        aria-label="Previous month"
-                        onClick={() =>
-                          setMonth(addMonths(month + '-01', -1).slice(0, 7))
-                        }
-                      >
-                        <ChevronLeft size={16} />
-                      </button>
-                      <span>{monthLabel(month)}</span>
-                      <button
-                        aria-label="Next month"
-                        onClick={() =>
-                          setMonth(addMonths(month + '-01', 1).slice(0, 7))
-                        }
-                      >
-                        <ChevronRight size={16} />
-                      </button>
-                    </div>
+                  {view === 'Transactions' && balanceActivity ? (
+                    <span className="badge shared">
+                      <Users size={12} /> Shared balance history
+                    </span>
+                  ) : (
+                    <Tabs
+                      value={scope}
+                      onValueChange={(v) => setScope(String(v))}
+                    >
+                      <TabsList>
+                        <TabsTrigger value="all">My overview</TabsTrigger>
+                        <TabsTrigger value="shared">Shared</TabsTrigger>
+                        <TabsTrigger value="mine">
+                          Mine <LockKeyhole size={12} />
+                        </TabsTrigger>
+                      </TabsList>
+                    </Tabs>
                   )}
+                  {!['Cash flow', 'Savings goals'].includes(view) &&
+                    !(view === 'Transactions' && balanceActivity) && (
+                      <div className="month-switch">
+                        <button
+                          aria-label="Previous month"
+                          onClick={() =>
+                            setMonth(addMonths(month + '-01', -1).slice(0, 7))
+                          }
+                        >
+                          <ChevronLeft size={16} />
+                        </button>
+                        <span>{monthLabel(month)}</span>
+                        <button
+                          aria-label="Next month"
+                          onClick={() =>
+                            setMonth(addMonths(month + '-01', 1).slice(0, 7))
+                          }
+                        >
+                          <ChevronRight size={16} />
+                        </button>
+                      </div>
+                    )}
                 </div>
               )}
               {view === 'Household rhythm' && (
@@ -935,13 +958,15 @@ export default function Planner() {
                       </p>
                       <button
                         className="text-button"
-                        onClick={() =>
-                          openEditor('settlement', undefined, {
-                            scope: 'shared',
-                          })
-                        }
+                        onClick={() => {
+                          setScope('shared');
+                          setSearch('');
+                          setBalanceActivity(true);
+                          setView('Transactions');
+                        }}
                       >
-                        Record a reimbursement <ArrowUpRight size={16} />
+                        Review expenses & transfer history{' '}
+                        <ArrowUpRight size={16} />
                       </button>
                     </section>
                   </div>
@@ -959,7 +984,19 @@ export default function Planner() {
               {view === 'Transactions' && (
                 <section className="panel">
                   <div className="section-heading">
-                    <h2>Your spending journal</h2>
+                    <div>
+                      <h2>
+                        {balanceActivity
+                          ? 'Shared balance activity'
+                          : 'Your spending journal'}
+                      </h2>
+                      {balanceActivity && (
+                        <p className="hint">
+                          Expenses paid from a member’s account and the
+                          transfers that settle them, across all dates.
+                        </p>
+                      )}
+                    </div>
                     <input
                       className="search"
                       aria-label="Search transactions"
@@ -985,69 +1022,73 @@ export default function Planner() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filtered
-                        .filter(
-                          (r) =>
-                            ['transaction', 'settlement'].includes(r.kind) &&
-                            r.date.startsWith(month) &&
-                            `${r.title} ${r.note}`
-                              .toLowerCase()
-                              .includes(search.toLowerCase()),
-                        )
-                        .map((r) => (
-                          <TableRow key={r.id}>
-                            <TableCell>{r.date}</TableCell>
-                            <TableCell>
-                              <b>{r.title}</b>
-                              <small className="table-note">
-                                {kindNames[r.kind]} ·{' '}
-                                {data.categories.find(
-                                  (c) => c.id === r.category_id,
-                                )?.name ?? '—'}
-                                {r.note ? ' · ' + r.note : ''}
-                              </small>
-                            </TableCell>
-                            <TableCell>
-                              <Owner r={r} />
-                            </TableCell>
-                            <TableCell>{fmt(r.amount_cents)}</TableCell>
-                            <TableCell>
-                              {r.kind === 'settlement'
-                                ? 'Transfer'
-                                : fmt(myShare(r, data.member))}
-                            </TableCell>
-                            <TableCell>
-                              {data.members.find((m) => m.id === r.payer_id)
-                                ?.name ?? '—'}
-                            </TableCell>
-                            <TableCell>
-                              <div className="actions">
-                                {!r.source_id && (
-                                  <button
-                                    className="icon-button"
-                                    aria-label={`Edit ${r.title}`}
-                                    onClick={() => openEditor(r.kind, r)}
-                                  >
-                                    <Pencil size={15} />
-                                  </button>
-                                )}
+                      {transactionRows.map((r) => (
+                        <TableRow key={r.id}>
+                          <TableCell>{r.date}</TableCell>
+                          <TableCell>
+                            <b>{r.title}</b>
+                            <small className="table-note">
+                              {kindNames[r.kind]} ·{' '}
+                              {data.categories.find(
+                                (c) => c.id === r.category_id,
+                              )?.name ?? '—'}
+                              {r.related_record_id
+                                ? ` · settles ${data.records.find((expense) => expense.id === r.related_record_id)?.title ?? 'a shared expense'}`
+                                : ''}
+                              {r.note ? ' · ' + r.note : ''}
+                            </small>
+                          </TableCell>
+                          <TableCell>
+                            <Owner r={r} />
+                          </TableCell>
+                          <TableCell>{fmt(r.amount_cents)}</TableCell>
+                          <TableCell>
+                            {r.kind === 'settlement'
+                              ? 'Transfer'
+                              : fmt(myShare(r, data.member))}
+                          </TableCell>
+                          <TableCell>
+                            {data.members.find((m) => m.id === r.payer_id)
+                              ?.name ?? '—'}
+                          </TableCell>
+                          <TableCell>
+                            <div className="actions">
+                              {!r.source_id && (
                                 <button
                                   className="icon-button"
-                                  aria-label={`Delete ${r.title}`}
-                                  onClick={() => setDeleting(r)}
+                                  aria-label={`Edit ${r.title}`}
+                                  onClick={() => openEditor(r.kind, r)}
                                 >
-                                  <Trash2 size={15} />
+                                  <Pencil size={15} />
                                 </button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                              )}
+                              <button
+                                className="icon-button"
+                                aria-label={`Delete ${r.title}`}
+                                onClick={() => setDeleting(r)}
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
                     </TableBody>
                   </Table>
-                  {!transactions.length && (
+                  {!transactionRows.length && (
                     <Empty>
-                      Your transactions will appear here as you add them.
+                      {balanceActivity
+                        ? 'No shared expenses or transfers have been recorded yet.'
+                        : 'Your transactions will appear here as you add them.'}
                     </Empty>
+                  )}
+                  {balanceActivity && (
+                    <button
+                      className="text-button lower"
+                      onClick={() => setBalanceActivity(false)}
+                    >
+                      Back to monthly spending journal
+                    </button>
                   )}
                 </section>
               )}

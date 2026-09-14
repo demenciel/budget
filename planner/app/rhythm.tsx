@@ -1,12 +1,6 @@
 'use client';
 import { useState, type ReactNode, type SubmitEvent } from 'react';
-import {
-  Users,
-  LockKeyhole,
-  ArrowUpRight,
-  Check,
-  CreditCard,
-} from 'lucide-react';
+import { Users, ArrowUpRight, Check, CreditCard } from 'lucide-react';
 import {
   NativeSelect,
   NativeSelectOption,
@@ -126,26 +120,6 @@ export function HouseholdRhythm({ data, busy, mutate, edit }: Props) {
     addDays(now, 60),
     data.jointEntries,
   );
-  const paydays = timeline.filter(
-    (e) =>
-      e.record.kind === 'payday' &&
-      e.record.dependable !== 0 &&
-      e.record.frequency !== 'once',
-  );
-  const lastPay =
-    paydays.filter((e) => e.date <= now).at(-1)?.date ?? joint.start;
-  const nextPay = paydays.find((e) => e.date > now);
-  const personalSpent = data.records
-    .filter(
-      (r) =>
-        r.owner_id === data.member.id &&
-        r.kind === 'transaction' &&
-        r.spending_bucket === 'discretionary' &&
-        r.date >= lastPay &&
-        r.date <= now,
-    )
-    .reduce((n, r) => n + r.amount_cents, 0);
-  const allowance = data.member.allowance_cents ?? 0;
   const jointSpending = data.records.filter(
     (r) =>
       r.kind === 'transaction' &&
@@ -153,9 +127,12 @@ export function HouseholdRhythm({ data, busy, mutate, edit }: Props) {
       r.date >= joint.start &&
       r.date <= now,
   );
-  const receivedExtras = data.records.filter(
-    (r) => r.kind === 'payday' && r.frequency === 'once' && r.dependable === 0,
-  );
+  const paidMemberBills = data.records.filter((r) => {
+    if (r.kind !== 'transaction' || !r.source_id || r.account === 'joint')
+      return false;
+    const plan = data.records.find((candidate) => candidate.id === r.source_id);
+    return !!plan && ['bill', 'subscription'].includes(plan.kind);
+  });
   const lastEntry = [
     ...(data.jointEntries ?? []).map((e) => e.date),
     ...data.records.filter((r) => r.account === 'joint').map((r) => r.date),
@@ -341,7 +318,7 @@ export function HouseholdRhythm({ data, busy, mutate, edit }: Props) {
           </p>
         </section>
         <section className="panel">
-          <h2>Groceries, baby, and the good things</h2>
+          <h2>Joint spending activity</h2>
           {data.categories.map((c) => {
             const spent = jointSpending
               .filter((r) => r.category_id === c.id)
@@ -358,6 +335,30 @@ export function HouseholdRhythm({ data, busy, mutate, edit }: Props) {
             subscriptions, baby needs, and treats when money remains. Each
             purchase is counted once, whoever uses a card.
           </p>
+          <h3 className="lower">Shared transactions this cycle</h3>
+          {jointSpending.length === 0 ? (
+            <p className="hint">No joint spending recorded this cycle.</p>
+          ) : (
+            jointSpending.map((r) => (
+              <div className="event-row" key={r.id}>
+                <div className="event-name">
+                  <button
+                    className="row-title"
+                    onClick={() => edit('transaction', r)}
+                  >
+                    {r.title}
+                  </button>
+                  <small>
+                    {r.date} · {fmt(r.amount_cents)} ·{' '}
+                    {r.payment_method === 'card'
+                      ? `card used by ${name(r.payer_id ?? '')}`
+                      : 'joint debit'}
+                  </small>
+                </div>
+                <b>{fmt(r.amount_cents)}</b>
+              </div>
+            ))
+          )}
           <h3 className="lower">
             <CreditCard size={18} /> Card repayments to do now
           </h3>
@@ -399,47 +400,82 @@ export function HouseholdRhythm({ data, busy, mutate, edit }: Props) {
       <section className="panel lower">
         <h2>Bills paid from a member’s account</h2>
         <p className="hint">
-          Set Cheryl as the payer on mortgage, utilities, and other bills that
-          leave her account. Your portion is shown here. Recording a transfer
-          updates reimbursements; it does not mark the bill paid.
+          These are recorded bill payments, followed by any transfer that
+          settled your portion. Open a transfer to inspect or correct it.
         </p>
-        {timeline
-          .filter(
-            (e) =>
-              !e.paid &&
-              !e.record.owner_id &&
-              ['bill', 'subscription'].includes(e.record.kind) &&
-              e.date >= now,
-          )
-          .slice(0, 15)
-          .map((e) => (
-            <div className="event-row" key={e.id}>
+        {paidMemberBills.length === 0 && (
+          <p className="hint">No member-paid shared bills recorded yet.</p>
+        )}
+        {paidMemberBills.slice(0, 15).map((payment) => {
+          const viewerIsPayer = payment.payer_id === data.member.id,
+            responsibleMember = viewerIsPayer
+              ? data.members.find((m) => m.id !== data.member.id)
+              : data.member,
+            transfers = data.records.filter(
+              (r) =>
+                r.kind === 'settlement' && r.related_record_id === payment.id,
+            ),
+            portion = responsibleMember
+              ? myShare(payment, responsibleMember)
+              : 0,
+            transferred = transfers
+              .filter((r) => r.payer_id === responsibleMember?.id)
+              .reduce((sum, r) => sum + r.amount_cents, 0),
+            remaining = Math.max(0, portion - transferred);
+          return (
+            <div className="event-row" key={payment.id}>
               <div className="event-name">
-                <b>{e.record.title}</b>
-                <small>
-                  {e.date} · paid from {name(e.record.payer_id ?? '')}’s account
-                  · total {fmt(e.record.amount_cents)}
-                </small>
-              </div>
-              <b>My portion {fmt(myShare(e.record, data.member))}</b>
-              {e.record.payer_id && e.record.payer_id !== data.member.id && (
                 <button
-                  className="text-button"
-                  onClick={() =>
-                    edit('settlement', undefined, {
-                      title: `Bill transfer: ${e.record.title}`,
-                      scope: 'shared',
-                      amount: decimal(myShare(e.record, data.member)),
-                      payer_id: data.member.id,
-                      note: `Transfer to ${name(e.record.payer_id!)} for occurrence ${e.date}.`,
-                    })
-                  }
+                  className="row-title"
+                  onClick={() => edit('transaction', payment)}
                 >
-                  Record my transfer
+                  {payment.title}
                 </button>
-              )}
+                <small>
+                  {payment.date} · paid from {name(payment.payer_id ?? '')}’s
+                  account · total {fmt(payment.amount_cents)}
+                </small>
+                {transfers.map((transfer) => (
+                  <button
+                    className="text-button"
+                    key={transfer.id}
+                    onClick={() => edit('settlement', transfer)}
+                  >
+                    Open transfer · {transfer.date} ·{' '}
+                    {name(transfer.payer_id ?? '')} sent{' '}
+                    {fmt(transfer.amount_cents)} <ArrowUpRight size={14} />
+                  </button>
+                ))}
+              </div>
+              <b>
+                {remaining
+                  ? `${viewerIsPayer ? 'Still owed' : 'Still owe'} ${fmt(remaining)}`
+                  : 'Settled'}
+              </b>
+              {payment.payer_id &&
+                payment.payer_id !== data.member.id &&
+                remaining > 0 && (
+                  <button
+                    className="text-button"
+                    onClick={() =>
+                      edit('settlement', undefined, {
+                        title: `Bill transfer: ${payment.title}`,
+                        scope: 'shared',
+                        amount: decimal(remaining),
+                        payer_id: data.member.id,
+                        related_record_id: payment.id,
+                        related_occurrence_date:
+                          payment.occurrence_date ?? payment.date,
+                        note: `Transfer to ${name(payment.payer_id!)} for the ${payment.occurrence_date ?? payment.date} bill payment.`,
+                      })
+                    }
+                  >
+                    Record transfer
+                  </button>
+                )}
             </div>
-          ))}
+          );
+        })}
         <button
           className="text-button"
           onClick={() =>
@@ -457,150 +493,6 @@ export function HouseholdRhythm({ data, busy, mutate, edit }: Props) {
           Add a shared bill →
         </button>
       </section>
-      <div className="columns lower">
-        <section className="panel">
-          <span className="badge mine">
-            <LockKeyhole size={12} /> Mine · {data.member.name}
-          </span>
-          <h2 className="lower">My payday boundaries</h2>
-          <p
-            className={
-              'balance-value ' +
-              (allowance - personalSpent < 0 ? 'overdue' : '')
-            }
-          >
-            {fmt(allowance - personalSpent)}
-          </p>
-          <p className="muted">
-            Personal spending left since {lastPay}. {fmt(personalSpent)}{' '}
-            recorded against {fmt(allowance)}.
-          </p>
-          <p className="hint">
-            Tag private purchases “Personal spending allowance” to count them
-            here. Fixed expenses stay separate. This plan does not treat credit
-            limits or new borrowing as available money.
-          </p>
-          <form
-            className="form-grid lower"
-            onSubmit={(e) => void submit(e, 'rhythm:privatePlan')}
-          >
-            <Field label="Fixed personal costs to retain each pay">
-              <input
-                name="fixed"
-                defaultValue={decimal(data.member.fixed_reserve_cents)}
-                inputMode="decimal"
-                required
-              />
-            </Field>
-            <Field label="Personal spending to retain each pay">
-              <input
-                name="allowance"
-                defaultValue={decimal(allowance)}
-                inputMode="decimal"
-                required
-              />
-            </Field>
-            <button className="primary full" disabled={busy}>
-              Save my private boundaries
-            </button>
-          </form>
-          {nextPay && (
-            <p className="hint">
-              Next dependable pay: {fmt(nextPay.record.amount_cents)} on{' '}
-              {nextPay.date}. After your two private reserves:{' '}
-              {fmt(
-                nextPay.record.amount_cents -
-                  (data.member.fixed_reserve_cents ?? 0) -
-                  allowance,
-              )}
-              , before bill transfers and joint contributions.
-            </p>
-          )}
-          <h3 className="lower">Extra income stays extra</h3>
-          {receivedExtras.map((r) => (
-            <div className="event-row" key={r.id}>
-              <div className="event-name">
-                <b>{r.title}</b>
-                <small>
-                  {fmt(r.amount_cents)} ·{' '}
-                  {r.received
-                    ? 'Received'
-                    : 'Expected · excluded from baseline'}{' '}
-                  · {r.date}
-                </small>
-                <small>
-                  {r.note || 'Add a note about where this money is going.'}
-                </small>
-              </div>
-              <button className="text-button" onClick={() => edit('payday', r)}>
-                Edit
-              </button>
-            </div>
-          ))}
-          <p className="hint">
-            Initial computer-work payment: record the income privately, and
-            record the actual credit-card payment separately when paid. Monthly
-            extras can stay personal or be proposed below for dates/joint use;
-            no forecast assumes those extras will arrive.
-          </p>
-        </section>
-        <section className="panel">
-          <h2>Our fortnightly setup</h2>
-          <p className="hint">
-            Choose any cycle anchor date. Every cycle is exactly 14 days. The
-            opening amount is the actual joint balance before activity on its
-            date; once activity exists it is locked to keep the ledger
-            consistent.
-          </p>
-          <form
-            className="form-grid lower"
-            onSubmit={(e) => void submit(e, 'rhythm:setup')}
-          >
-            <Field label="Cycle starts on">
-              <input
-                name="anchor"
-                type="date"
-                defaultValue={data.household.cycle_anchor ?? now}
-                required
-              />
-            </Field>
-            <Field label="Target contribution each cycle">
-              <input
-                name="target"
-                inputMode="decimal"
-                defaultValue={decimal(data.household.joint_target_cents)}
-                required
-              />
-            </Field>
-            <Field label="Joint opening balance">
-              <input
-                name="opening"
-                inputMode="decimal"
-                defaultValue={decimal(data.household.joint_opening_cents)}
-                required
-              />
-            </Field>
-            <Field label="Opening balance date">
-              <input
-                name="date"
-                type="date"
-                max={now}
-                defaultValue={data.household.joint_opening_date ?? now}
-                required
-              />
-            </Field>
-            <button className="primary full" disabled={busy}>
-              Save our joint setup
-            </button>
-          </form>
-          <p className="hint">
-            This cycle: {fmt(joint.cycleDeposits)} deposited toward{' '}
-            {fmt(data.household.joint_target_cents ?? 0)}. Transfers are
-            recorded manually; the app cannot move money or enforce card
-            spending limits.
-          </p>
-        </section>
-      </div>
       <section className="panel lower">
         <span className="badge shared">Shared · agreements</span>
         <h2 className="lower">Only what we agree to share</h2>
