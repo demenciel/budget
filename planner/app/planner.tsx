@@ -39,6 +39,14 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
+import {
   Select,
   SelectTrigger,
   SelectValue,
@@ -1910,6 +1918,9 @@ function Budget({
   edit: (k: Kind, r?: RecordItem, o?: Partial<Draft>) => void;
   fmt: (n: number) => string;
 }) {
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(
+    null,
+  );
   const rows = budgetRows(
     data.records,
     data.categories,
@@ -1917,80 +1928,232 @@ function Budget({
     scope,
     data.member,
   );
+  const selected = rows.find((row) => row.category.id === selectedCategoryId);
+  const first = month + '-01';
+  const last = addDays(addMonths(first, 1), -1);
+  const scopedRecords = data.records.filter((r) =>
+    scope === 'shared' ? r.owner_id === null : r.owner_id === data.member.id,
+  );
+  const selectedTransactions = selected
+    ? scopedRecords.filter(
+        (r) =>
+          r.kind === 'transaction' &&
+          r.category_id === selected.category.id &&
+          r.date.startsWith(month),
+      )
+    : [];
+  const selectedPlans = selected
+    ? events(scopedRecords, first, last, data.jointEntries).filter(
+        (e) =>
+          e.record.category_id === selected.category.id &&
+          ['bill', 'subscription', 'debt', 'purchase'].includes(e.record.kind),
+      )
+    : [];
+  const openPlanEditor = () => {
+    if (!selected) return;
+    setSelectedCategoryId(null);
+    edit('budget', selected.budget, {
+      scope,
+      category_id: selected.category.id,
+      title: selected.category.name + ' plan',
+      date: month + '-01',
+    });
+  };
   return (
-    <section className="panel">
-      <div className="section-heading">
-        <div>
-          <h2>
-            {scope === 'shared' ? 'Our shared plan' : 'My private monthly plan'}
-          </h2>
-          <p className="hint">
-            {scope === 'shared'
-              ? 'Full shared totals; split details stay with each bill.'
-              : 'Private spending only. Open Shared to review household totals.'}
-          </p>
+    <>
+      <section className="panel">
+        <div className="section-heading">
+          <div>
+            <h2>
+              {scope === 'shared'
+                ? 'Our shared plan'
+                : 'My private monthly plan'}
+            </h2>
+            <p className="hint">
+              {scope === 'shared'
+                ? 'Full shared totals; split details stay with each bill.'
+                : 'Private spending only. Open Shared to review household totals.'}
+            </p>
+          </div>
+          <Owner r={{ owner_id: scope === 'shared' ? null : data.member.id }} />
         </div>
-        <Owner r={{ owner_id: scope === 'shared' ? null : data.member.id }} />
-      </div>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            {[
-              'Category',
-              'Planned',
-              'Actual',
-              'Difference',
-              'Reflection',
-              '',
-            ].map((h, i) => (
-              <TableHead key={i}>{h}</TableHead>
-            ))}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.map((row) => (
-            <TableRow key={row.category.id}>
-              <TableCell>{row.category.name}</TableCell>
-              <TableCell>{fmt(row.planned)}</TableCell>
-              <TableCell>{fmt(row.actual)}</TableCell>
-              <TableCell className={row.difference < 0 ? 'overdue' : ''}>
-                {fmt(row.difference)}
-              </TableCell>
-              <TableCell className="note-cell">
-                {row.budget?.note || '—'}
-              </TableCell>
-              <TableCell>
-                <button
-                  className="icon-button"
-                  aria-label={`Plan ${row.category.name}`}
-                  onClick={() =>
-                    edit('budget', row.budget, {
-                      scope,
-                      category_id: row.category.id,
-                      title: row.category.name + ' plan',
-                      date: month + '-01',
-                    })
-                  }
-                >
-                  <Pencil size={16} />
-                </button>
-              </TableCell>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              {[
+                'Category',
+                'Planned',
+                'Actual',
+                'Difference',
+                'Reflection',
+                '',
+              ].map((h, i) => (
+                <TableHead key={i}>{h}</TableHead>
+              ))}
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-      <div className="budget-total">
-        <b>This month</b>
-        <span>{fmt(rows.reduce((n, r) => n + r.planned, 0))} planned</span>
-        <span>{fmt(rows.reduce((n, r) => n + r.actual, 0))} actual</span>
-      </div>
-      <p className="hint">
-        Positive difference means room left in the plan. A negative difference
-        means spending exceeded the plan. Savings goals track progress
-        separately; record actual savings or debt outflows as transactions to
-        include them here.
-      </p>
-    </section>
+          </TableHeader>
+          <TableBody>
+            {rows.map((row) => (
+              <TableRow
+                className="budget-row"
+                key={row.category.id}
+                tabIndex={0}
+                aria-label={`Open ${row.category.name} budget details`}
+                onClick={() => setSelectedCategoryId(row.category.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setSelectedCategoryId(row.category.id);
+                  }
+                }}
+              >
+                <TableCell>
+                  <b>{row.category.name}</b>
+                </TableCell>
+                <TableCell>{fmt(row.planned)}</TableCell>
+                <TableCell>{fmt(row.actual)}</TableCell>
+                <TableCell className={row.difference < 0 ? 'overdue' : ''}>
+                  {fmt(row.difference)}
+                </TableCell>
+                <TableCell className="note-cell">
+                  {row.budget?.note || '—'}
+                </TableCell>
+                <TableCell className="budget-open-cell">
+                  <ChevronRight size={17} aria-hidden="true" />
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+        <div className="budget-total">
+          <b>This month</b>
+          <span>{fmt(rows.reduce((n, r) => n + r.planned, 0))} planned</span>
+          <span>{fmt(rows.reduce((n, r) => n + r.actual, 0))} actual</span>
+        </div>
+        <p className="hint">
+          Select a category to see its plan, scheduled items, and recorded
+          spending. Positive difference means room left in the plan. A negative
+          difference means spending exceeded the plan.
+        </p>
+      </section>
+      <Sheet
+        open={!!selected}
+        onOpenChange={(open) => {
+          if (!open) setSelectedCategoryId(null);
+        }}
+      >
+        <SheetContent className="budget-detail-sheet">
+          {selected && (
+            <>
+              <SheetHeader>
+                <span className="eyebrow">{monthLabel(month)}</span>
+                <SheetTitle>{selected.category.name}</SheetTitle>
+                <SheetDescription>
+                  {scope === 'shared'
+                    ? 'Shared household plan and activity'
+                    : `Private plan for ${data.member.name}`}
+                </SheetDescription>
+              </SheetHeader>
+              <div className="budget-detail-body">
+                <div className="budget-detail-summary">
+                  <div>
+                    <span>Planned</span>
+                    <b>{fmt(selected.planned)}</b>
+                  </div>
+                  <div>
+                    <span>Spent</span>
+                    <b>{fmt(selected.actual)}</b>
+                  </div>
+                  <div>
+                    <span>
+                      {selected.difference < 0 ? 'Over plan' : 'Remaining'}
+                    </span>
+                    <b className={selected.difference < 0 ? 'overdue' : ''}>
+                      {fmt(Math.abs(selected.difference))}
+                    </b>
+                  </div>
+                </div>
+                <section className="budget-detail-section">
+                  <div className="section-heading">
+                    <h3>Monthly intention</h3>
+                    <button className="text-button" onClick={openPlanEditor}>
+                      <Pencil size={14} />
+                      {selected.budget ? 'Edit plan' : 'Add plan'}
+                    </button>
+                  </div>
+                  <p>
+                    {selected.budget?.note ||
+                      (selected.budget
+                        ? 'No note added for this category.'
+                        : 'No monthly amount has been planned yet.')}
+                  </p>
+                </section>
+                <section className="budget-detail-section">
+                  <h3>Planned items</h3>
+                  {selectedPlans.length ? (
+                    selectedPlans.map((item) => (
+                      <button
+                        className="budget-detail-item"
+                        key={item.id}
+                        onClick={() => {
+                          setSelectedCategoryId(null);
+                          edit(item.record.kind, item.record);
+                        }}
+                      >
+                        <span>
+                          <b>{item.record.title}</b>
+                          <small>
+                            {item.date} · {item.paid ? 'Paid' : 'Planned'}
+                          </small>
+                        </span>
+                        <strong>{fmt(item.record.amount_cents)}</strong>
+                        <ChevronRight size={16} aria-hidden="true" />
+                      </button>
+                    ))
+                  ) : (
+                    <p className="hint">
+                      No bills, subscriptions, debts, or purchases are scheduled
+                      in this category this month.
+                    </p>
+                  )}
+                </section>
+                <section className="budget-detail-section">
+                  <h3>Recorded spending</h3>
+                  {selectedTransactions.length ? (
+                    selectedTransactions.map((transaction) => (
+                      <button
+                        className="budget-detail-item"
+                        key={transaction.id}
+                        onClick={() => {
+                          setSelectedCategoryId(null);
+                          edit('transaction', transaction);
+                        }}
+                      >
+                        <span>
+                          <b>{transaction.title}</b>
+                          <small>{transaction.date}</small>
+                        </span>
+                        <strong>{fmt(transaction.amount_cents)}</strong>
+                        <ChevronRight size={16} aria-hidden="true" />
+                      </button>
+                    ))
+                  ) : (
+                    <p className="hint">
+                      No spending has been recorded in this category this month.
+                    </p>
+                  )}
+                </section>
+              </div>
+              <SheetFooter>
+                <button className="primary" onClick={openPlanEditor}>
+                  {selected.budget ? 'Edit monthly plan' : 'Plan this category'}
+                </button>
+              </SheetFooter>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
+    </>
   );
 }
 function CalendarView({
