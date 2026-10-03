@@ -717,7 +717,23 @@ p {
 }
 .actions {
   display: flex;
+  align-items: center;
   gap: 6px;
+}
+.settlement-control {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+}
+.settlement-control small {
+  color: #6e7e62;
+  font-size: 13px;
+}
+.settle-action {
+  font-size: 14px;
+  white-space: nowrap;
 }
 .field {
   display: flex;

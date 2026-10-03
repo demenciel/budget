@@ -33,21 +33,24 @@ All key requests return `Cache-Control: private, no-store` and `X-Content-Type-O
 
 ## Actions
 
-| Action            | Body fields                                                 | Behavior                                                           |
-| ----------------- | ----------------------------------------------------------- | ------------------------------------------------------------------ |
-| `createHousehold` | `name`, `currency`                                          | Creates household, first member, categories in one transaction     |
-| `joinHousehold`   | `name`, `token`                                             | Consumes unexpired one-use invitation; unique slot 2               |
-| `invite`          | none                                                        | Rotates household invitation, expires in 7 days                    |
-| `profile`         | `name`, `opening`, `date`                                   | Saves current person's display name and private balance snapshot   |
-| `category`        | `name`, optional `id`                                       | Creates or renames household category                              |
-| `save`            | `record`, optional `id`                                     | Validates and creates/updates a typed record                       |
-| `delete`          | `id`                                                        | Authorized delete; detaches linked payments before deleting a plan |
-| `pay`             | `id`, scheduled `date`, optional `payment_date`, `payer_id` | Creates transaction linked to unique scheduled occurrence          |
-| `seed`            | none                                                        | Inserts illustrative examples only into an empty visible notebook  |
+| Action                | Body fields                                                 | Behavior                                                                 |
+| --------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `createHousehold`     | `name`, `currency`                                          | Creates household, first member, categories in one transaction           |
+| `joinHousehold`       | `name`, `token`                                             | Consumes unexpired one-use invitation; unique slot 2                     |
+| `invite`              | none                                                        | Rotates household invitation, expires in 7 days                          |
+| `profile`             | `name`, `opening`, `date`                                   | Saves current person's display name and private balance snapshot         |
+| `category`            | `name`, optional `id`                                       | Creates or renames household category                                    |
+| `save`                | `record`, optional `id`                                     | Validates and creates/updates a typed record                             |
+| `delete`              | `id`                                                        | Authorized delete; detaches linked payments before deleting a plan       |
+| `pay`                 | `id`, scheduled `date`, optional `payment_date`, `payer_id` | Creates transaction linked to unique scheduled occurrence                |
+| `setSettlementStatus` | shared non-joint transaction `id`, `settled` (boolean)      | Marks or reopens an expense in the owed balance without changing budgets |
+| `seed`                | none                                                        | Inserts illustrative examples only into an empty visible notebook        |
 
 Amounts in incoming record bodies are decimal **strings** (`"126.80"`). Database responses use integer cents. The record editor's `inputRecord` function is the response-to-form adapter. Incoming fields are explicitly selected by `validateRecord`; arbitrary owner/household/source IDs are never copied through.
 
 A record body includes `kind`, `scope` (`mine`/`shared`), `title`, `amount`, `date`, optional `end_date`, `frequency`, `category_id`, `split_bps`, `payer_id`, `note`, `priority`, `balance`, `saved`, `completed` (boolean), and `remind_days`. Private owner derives from identity. `source_id` and `occurrence_date` are server-controlled through `pay`.
+
+`setSettlementStatus` is available through both the signed-in endpoint and the API-key endpoint. It changes only the shared balance calculation: the expense remains in spending and budget actuals, and no money movement is created. Explicitly linked reimbursements are ignored in the balance while the expense is marked settled; unlinked transfers still count. Either household member can reopen the expense. The returned record includes nullable `settled_at`.
 
 `GET /api/notebook?export=calendar&scope=shared` downloads an ICS file. `scope=mine-and-shared` opts into including the caller's private events; never the partner's. Other scopes default to shared-only.
 

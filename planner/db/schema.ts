@@ -99,6 +99,7 @@ export const records = sqliteTable(
     occurrenceDate: text('occurrence_date'),
     relatedRecordId: text('related_record_id'),
     relatedOccurrenceDate: text('related_occurrence_date'),
+    settledAt: text('settled_at'),
     completed: integer('completed').notNull().default(0),
     remindDays: integer('remind_days').notNull().default(3),
     secondDay: integer('second_day').notNull().default(15),

@@ -339,6 +339,126 @@ void test('a debtor can link a transfer to the bill payment it settles', async (
   );
   db.raw.close();
 });
+void test('either member can mark a shared expense settled without changing budgets', async () => {
+  const { db, a, c } = await household();
+  const category = (await loadNotebook(db, a)).categories[0];
+  const transaction = {
+    ...expense,
+    title: 'Shared groceries',
+    amount: '100',
+    scope: 'shared',
+    payer_id: a.id,
+    category_id: category.id,
+  };
+  await save(db, alex, transaction);
+  const original = (await loadNotebook(db, a)).records[0];
+  await save(db, cheryl, {
+    kind: 'settlement',
+    title: 'Partial transfer',
+    amount: '20',
+    date: today(),
+    scope: 'shared',
+    payer_id: c.id,
+    related_record_id: original.id,
+  });
+  const before = await loadNotebook(db, a);
+  const budgetBefore = budgetRows(
+    before.records,
+    before.categories,
+    today().slice(0, 7),
+    'shared',
+    a,
+  );
+  const jointBefore = jointSummary(before);
+  assert.equal(reimbursement(before.records, a), 3000);
+  await handleAction(db, cheryl, {
+    action: 'setSettlementStatus',
+    id: original.id,
+    settled: true,
+  });
+  const after = await loadNotebook(db, a);
+  assert(after.records.find((r) => r.id === original.id)?.settled_at);
+  assert.equal(reimbursement(after.records, a), 0);
+  assert.equal(reimbursement(after.records, c), 0);
+  assert.deepEqual(
+    budgetRows(
+      after.records,
+      after.categories,
+      today().slice(0, 7),
+      'shared',
+      a,
+    ),
+    budgetBefore,
+  );
+  assert.deepEqual(jointSummary(after), jointBefore);
+  await assert.rejects(
+    () => save(db, alex, { ...transaction, amount: '110' }, original.id),
+    /Reopen this expense/,
+  );
+  await assert.rejects(
+    () =>
+      save(db, cheryl, {
+        kind: 'settlement',
+        title: 'Extra transfer',
+        amount: '1',
+        date: today(),
+        scope: 'shared',
+        payer_id: c.id,
+        related_record_id: original.id,
+      }),
+    /Reopen this expense/,
+  );
+  await handleAction(db, alex, {
+    action: 'setSettlementStatus',
+    id: original.id,
+    settled: false,
+  });
+  assert.equal(reimbursement((await loadNotebook(db, a)).records, a), 3000);
+  db.raw.close();
+});
+void test('settlement status rejects private, joint and foreign expenses', async () => {
+  const { db, a } = await household();
+  await save(db, alex, expense);
+  await save(db, alex, {
+    ...expense,
+    scope: 'shared',
+    account: 'joint',
+    payer_id: a.id,
+  });
+  await save(db, alex, {
+    ...expense,
+    scope: 'shared',
+    payer_id: a.id,
+  });
+  const records = (await loadNotebook(db, a)).records;
+  for (const record of records.filter(
+    (r) => r.owner_id || r.account === 'joint',
+  ))
+    await assert.rejects(
+      () =>
+        handleAction(db, alex, {
+          action: 'setSettlementStatus',
+          id: record.id,
+          settled: true,
+        }),
+      /not found/,
+    );
+  await handleAction(db, outsider, {
+    action: 'createHousehold',
+    name: 'Outside',
+  });
+  const shared = records.find((r) => !r.owner_id && r.account !== 'joint')!;
+  await assert.rejects(
+    () =>
+      handleAction(db, outsider, {
+        action: 'setSettlementStatus',
+        id: shared.id,
+        settled: true,
+      }),
+    /not found/,
+  );
+  db.raw.close();
+});
 void test('monthly budget uniqueness is enforced separately for shared and each private owner', async () => {
   const { db, a } = await household();
   const plan = {

@@ -190,6 +190,30 @@ void test('reimbursements close balances with correct sender direction', () => {
   assert.equal(reimbursement([tx, settlement], me), 0);
   assert.equal(reimbursement([tx, settlement], partner), 0);
 });
+void test('manual settlement clears only the linked expense balance', () => {
+  const tx = record({
+    id: 'expense',
+    kind: 'transaction',
+    amount_cents: 10000,
+    payer_id: me.id,
+  });
+  const partial = record({
+    id: 'partial',
+    kind: 'settlement',
+    related_record_id: tx.id,
+    payer_id: partner.id,
+    amount_cents: 2000,
+  });
+  assert.equal(reimbursement([tx, partial], me), 3000);
+  const settled = { ...tx, settled_at: '2026-01-31T12:00:00.000Z' };
+  assert.equal(reimbursement([settled, partial], me), 0);
+  assert.equal(reimbursement([settled, partial], partner), 0);
+  assert.equal(
+    budgetRows([tx, partial], [category], '2026-01', 'shared', me)[0].actual,
+    budgetRows([settled, partial], [category], '2026-01', 'shared', me)[0]
+      .actual,
+  );
+});
 void test('paid occurrences are marked and forecast counts actual payment once', () => {
   const bill = record({
     date: '2026-01-10',

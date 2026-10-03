@@ -6,7 +6,7 @@ app/planner.tsx: RecordForm and Transactions; lib/domain.ts: validateRecord; lib
 
 ## Using it
 
-Add amount, date, owner, category, description and optional note. Shared expenses also record the full amount, split and payer. The journal shows full amount, your portion and who paid. Search description/notes within the selected month and scope. Linked bill payments are edited by deleting and re-recording; ordinary transactions can be edited directly.
+Add amount, date, owner, category, description and optional note. Shared expenses also record the full amount, split and payer. The journal shows full amount, your portion and who paid. Search description/notes within the selected month and scope. Shared expenses paid from a member's account show their settlement status and offer **Mark as settled** or **Reopen**. Linked bill payments are edited by deleting and re-recording; ordinary transactions can be edited directly.
 
 ## Data and behavior
 

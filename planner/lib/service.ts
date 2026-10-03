@@ -501,6 +501,28 @@ export async function handleAction(
     ? notebook.records.find((r) => r.id === body.id)
     : undefined;
   if (body.id && !existing) throw new HttpError('Item not found.', 404);
+  if (action === 'setSettlementStatus') {
+    if (
+      !existing ||
+      existing.kind !== 'transaction' ||
+      existing.owner_id !== null ||
+      existing.account === 'joint'
+    )
+      throw new HttpError('Shared expense not found.', 404);
+    if (typeof body.settled !== 'boolean')
+      throw new HttpError('Choose whether this expense is settled.');
+    await db
+      .prepare(
+        "UPDATE records SET settled_at=? WHERE id=? AND household_id=? AND owner_id IS NULL AND kind='transaction' AND account!='joint'",
+      )
+      .bind(
+        body.settled ? new Date().toISOString() : null,
+        existing.id,
+        member.household_id,
+      )
+      .run();
+    return { ok: true };
+  }
   if (
     existing &&
     ['save', 'delete'].includes(str(action)) &&
@@ -513,6 +535,15 @@ export async function handleAction(
     );
   if (action === 'delete') {
     if (!existing) throw new HttpError('Item not found.', 404);
+    if (
+      existing.settled_at &&
+      notebook.records.some(
+        (r) => r.kind === 'settlement' && r.related_record_id === existing.id,
+      )
+    )
+      throw new HttpError(
+        'Reopen this expense before deleting it so linked transfers can be reviewed.',
+      );
     // Preserve payment history after a recurring plan is removed.
     await db.batch([
       db
@@ -558,6 +589,7 @@ export async function handleAction(
       occurrence_date: body.date,
       created_at: new Date().toISOString(),
       payer_id: existing.owner_id ? member.id : str(body.payer_id, member.id),
+      settled_at: null,
       completed: 0,
     };
     if (!notebook.members.some((m) => m.id === r.payer_id))
@@ -590,6 +622,8 @@ export async function handleAction(
         throw new HttpError(
           'The expense linked to this transfer was not found.',
         );
+      if (expense.settled_at && existing?.related_record_id !== expense.id)
+        throw new HttpError('Reopen this expense before linking a transfer.');
       if (data.payer_id === expense.payer_id)
         throw new HttpError(
           'The person who paid the expense cannot reimburse themself.',
@@ -620,6 +654,16 @@ export async function handleAction(
       if (existing.kind !== data.kind || existing.owner_id !== data.owner_id)
         throw new HttpError(
           'Item type and ownership cannot be changed. Create a new item instead.',
+        );
+      if (
+        existing.settled_at &&
+        (existing.amount_cents !== data.amount_cents ||
+          existing.split_bps !== data.split_bps ||
+          existing.payer_id !== data.payer_id ||
+          existing.account !== data.account)
+      )
+        throw new HttpError(
+          'Reopen this expense before changing its amount, split, payer, or account.',
         );
       if (existing.source_id)
         throw new HttpError(

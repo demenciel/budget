@@ -56,6 +56,7 @@ export type RecordItem = {
   occurrence_date: string | null;
   related_record_id?: string | null;
   related_occurrence_date?: string | null;
+  settled_at?: string | null;
   completed: number;
   remind_days: number;
   created_at: string;
@@ -264,8 +265,24 @@ export function events(
     );
 }
 export function reimbursement(records: RecordItem[], member: Member) {
+  const settledExpenses = new Set(
+    records
+      .filter((r) => r.kind === 'transaction' && r.settled_at)
+      .map((r) => r.id),
+  );
   return records
-    .filter((r) => !r.owner_id && !r.completed && r.account !== 'joint')
+    .filter(
+      (r) =>
+        !r.owner_id &&
+        !r.completed &&
+        r.account !== 'joint' &&
+        !r.settled_at &&
+        !(
+          r.kind === 'settlement' &&
+          r.related_record_id &&
+          settledExpenses.has(r.related_record_id)
+        ),
+    )
     .reduce((n, r) => {
       if (r.kind === 'transaction')
         return (

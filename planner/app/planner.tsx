@@ -311,7 +311,13 @@ export default function Planner() {
       const result = (await r.json()) as Record<string, unknown>;
       if (!r.ok) throw new Error(String(result.error));
       await refresh();
-      setMessage('Saved to your notebook.');
+      setMessage(
+        body.action === 'setSettlementStatus'
+          ? body.settled
+            ? 'Expense marked as settled. Budgets were not changed.'
+            : 'Expense reopened in the shared balance.'
+          : 'Saved to your notebook.',
+      );
       return result;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong.');
@@ -989,8 +995,8 @@ export default function Planner() {
                         across recorded shared expenses.
                       </p>
                       <p className="hint">
-                        Based on who paid, each bill’s split, and recorded
-                        reimbursements.
+                        Based on who paid, each bill’s split, recorded
+                        reimbursements, and expenses marked settled.
                       </p>
                       <button
                         className="text-button"
@@ -1028,8 +1034,11 @@ export default function Planner() {
                       </h2>
                       {balanceActivity && (
                         <p className="hint">
-                          Expenses paid from a member’s account and the
-                          transfers that settle them, across all dates.
+                          Shared expenses and transfers across all dates. Mark
+                          an expense settled when you’ve made another
+                          arrangement instead of recording a transfer. This
+                          changes what is owed, not either person’s spending or
+                          the joint budget.
                         </p>
                       )}
                     </div>
@@ -1058,57 +1067,86 @@ export default function Planner() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {transactionRows.map((r) => (
-                        <TableRow key={r.id}>
-                          <TableCell>{r.date}</TableCell>
-                          <TableCell>
-                            <b>{r.title}</b>
-                            <small className="table-note">
-                              {kindNames[r.kind]} ·{' '}
-                              {data.categories.find(
-                                (c) => c.id === r.category_id,
-                              )?.name ?? '—'}
-                              {r.related_record_id
-                                ? ` · settles ${data.records.find((expense) => expense.id === r.related_record_id)?.title ?? 'a shared expense'}`
-                                : ''}
-                              {r.note ? ' · ' + r.note : ''}
-                            </small>
-                          </TableCell>
-                          <TableCell>
-                            <Owner r={r} />
-                          </TableCell>
-                          <TableCell>{fmt(r.amount_cents)}</TableCell>
-                          <TableCell>
-                            {r.kind === 'settlement'
-                              ? 'Transfer'
-                              : fmt(myShare(r, data.member))}
-                          </TableCell>
-                          <TableCell>
-                            {data.members.find((m) => m.id === r.payer_id)
-                              ?.name ?? '—'}
-                          </TableCell>
-                          <TableCell>
-                            <div className="actions">
-                              {!r.source_id && (
+                      {transactionRows.map((r) => {
+                        const sharedExpense =
+                          r.kind === 'transaction' &&
+                          r.owner_id === null &&
+                          r.account !== 'joint';
+                        return (
+                          <TableRow key={r.id}>
+                            <TableCell>{r.date}</TableCell>
+                            <TableCell>
+                              <b>{r.title}</b>
+                              <small className="table-note">
+                                {kindNames[r.kind]} ·{' '}
+                                {data.categories.find(
+                                  (c) => c.id === r.category_id,
+                                )?.name ?? '—'}
+                                {r.related_record_id
+                                  ? ` · settles ${data.records.find((expense) => expense.id === r.related_record_id)?.title ?? 'a shared expense'}`
+                                  : ''}
+                                {r.note ? ' · ' + r.note : ''}
+                              </small>
+                              {sharedExpense && (
+                                <div className="settlement-control">
+                                  {r.settled_at && (
+                                    <small>Settled by arrangement</small>
+                                  )}
+                                  <button
+                                    className="text-button settle-action"
+                                    disabled={busy}
+                                    aria-label={`${r.settled_at ? 'Reopen' : 'Mark as settled'} ${r.title}`}
+                                    onClick={() =>
+                                      void mutate({
+                                        action: 'setSettlementStatus',
+                                        id: r.id,
+                                        settled: !r.settled_at,
+                                      })
+                                    }
+                                  >
+                                    {r.settled_at
+                                      ? 'Reopen'
+                                      : 'Mark as settled'}
+                                  </button>
+                                </div>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <Owner r={r} />
+                            </TableCell>
+                            <TableCell>{fmt(r.amount_cents)}</TableCell>
+                            <TableCell>
+                              {r.kind === 'settlement'
+                                ? 'Transfer'
+                                : fmt(myShare(r, data.member))}
+                            </TableCell>
+                            <TableCell>
+                              {data.members.find((m) => m.id === r.payer_id)
+                                ?.name ?? '—'}
+                            </TableCell>
+                            <TableCell>
+                              <div className="actions">
+                                {!r.source_id && (
+                                  <button
+                                    className="icon-button"
+                                    aria-label={`Edit ${r.title}`}
+                                    onClick={() => openEditor(r.kind, r)}
+                                  >
+                                    <Pencil size={15} />
+                                  </button>
+                                )}
                                 <button
                                   className="icon-button"
-                                  aria-label={`Edit ${r.title}`}
-                                  onClick={() => openEditor(r.kind, r)}
+                                  aria-label={`Delete ${r.title}`}
+                                  onClick={() => setDeleting(r)}
                                 >
-                                  <Pencil size={15} />
+                                  <Trash2 size={15} />
                                 </button>
-                              )}
-                              <button
-                                className="icon-button"
-                                aria-label={`Delete ${r.title}`}
-                                onClick={() => setDeleting(r)}
-                              >
-                                <Trash2 size={15} />
-                              </button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                   {!transactionRows.length && (
