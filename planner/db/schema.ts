@@ -37,6 +37,21 @@ export const members = sqliteTable(
     check('member_slot', sql`${t.slot} IN (1,2)`),
   ],
 );
+export const apiKeys = sqliteTable(
+  'api_keys',
+  {
+    id: text('id').primaryKey(),
+    memberId: text('member_id')
+      .notNull()
+      .references(() => members.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    keyHash: text('key_hash').notNull().unique(),
+    prefix: text('prefix').notNull(),
+    createdAt: text('created_at').notNull(),
+    lastUsedAt: text('last_used_at'),
+  },
+  (t) => [index('api_keys_member').on(t.memberId)],
+);
 export const invitations = sqliteTable(
   'invitations',
   {

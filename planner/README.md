@@ -31,6 +31,7 @@ The site starts empty. Settings offers optional **illustrative sample data** whe
 | Feature                 | Behavior                                                                                  | Developer guide                                                           |
 | ----------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | Ownership and accounts  | Two-member household; private and shared records; hashed one-use invitations              | [Authentication and privacy](docs/features/authentication-and-privacy.md) |
+| API access              | Member-owned revocable keys; full read/write notebook and household actions               | [API](docs/api.md)                                                        |
 | Monthly budgeting       | Category plans, actual spending, differences, optional monthly reflection                 | [Monthly budgets](docs/features/monthly-budget.md)                        |
 | Categories              | Household categories can be created or renamed without breaking history                   | [Categories](docs/features/categories.md)                                 |
 | Transactions            | Manual amount/date/category/merchant/note, custom split, payer, edit/delete               | [Transactions](docs/features/transactions.md)                             |
@@ -74,9 +75,13 @@ app/
   globals.css              Theme and responsive layout
   chatgpt-auth.ts          Sites identity adapter (server only)
   api/notebook/route.ts    HTTP auth, no-cache, CSRF/origin, JSON and ICS responses
+  api/keys/route.ts        Signed-in key creation, listing and revocation
+  api/v1/notebook/route.ts API-key read/write and calendar export
 lib/
   domain.ts                Money, validation, dates, recurrence, budgets, forecasts, ICS
   service.ts               Database operations and ownership policy
+  api-keys.ts              Key generation, hashing, lookup and revocation
+  api-http.ts              API request handling and response rules
   utils.ts                 Component class-name helper
 components/ui/             Generated shadcn/Base UI primitives (unmodified)
 db/schema.ts               Drizzle schema; source of truth for migrations

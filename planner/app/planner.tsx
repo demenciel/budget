@@ -80,6 +80,7 @@ import {
   addDays,
   allocation,
   budgetRows,
+  budgetTransactionDate,
   events,
   forecast,
   reimbursement,
@@ -455,10 +456,37 @@ export default function Planner() {
   );
   const amountFor = (r: RecordItem) =>
     scope === 'all' && data ? myShare(r, data.member) : r.amount_cents;
-  const spent = transactions.reduce((n, r) => n + amountFor(r), 0),
-    planned = filtered
-      .filter((r) => r.kind === 'budget' && r.date.startsWith(month))
-      .reduce((n, r) => n + amountFor(r), 0);
+  const mineBudgetRows = data
+    ? budgetRows(data.records, data.categories, month, 'mine', data.member)
+    : [];
+  const sharedBudgetRows = data
+    ? budgetRows(data.records, data.categories, month, 'shared', data.member)
+    : [];
+  const spent = filtered
+    .filter(
+      (r) =>
+        r.kind === 'transaction' && budgetTransactionDate(r).startsWith(month),
+    )
+    .reduce((n, r) => n + amountFor(r), 0);
+  const planned =
+    scope === 'mine'
+      ? mineBudgetRows.reduce((n, row) => n + row.planned, 0)
+      : scope === 'shared'
+        ? sharedBudgetRows.reduce((n, row) => n + row.planned, 0)
+        : mineBudgetRows.reduce((n, row) => n + row.planned, 0) +
+          sharedBudgetRows.reduce(
+            (n, row) =>
+              n +
+              Math.max(
+                row.budget && data ? myShare(row.budget, data.member) : 0,
+                row.scheduledItems.reduce(
+                  (sum, item) =>
+                    sum + (data ? myShare(item.record, data.member) : 0),
+                  0,
+                ),
+              ),
+            0,
+          );
   const net = data ? reimbursement(data.records, data.member) : 0;
   const nextPay = upcoming.find(
     (e) =>
@@ -757,14 +785,14 @@ export default function Planner() {
                     <article className="stat feature">
                       <span>
                         {scope === 'all'
-                          ? 'My spending, including shared portions'
-                          : 'Spent this month'}
+                          ? 'My budgeted spending, including shared portions'
+                          : 'Budget actual this month'}
                       </span>
                       <strong>{fmt(spent)}</strong>
                       <small>
                         {planned
                           ? `Of ${fmt(planned)} planned`
-                          : 'Add a monthly plan to set your intention'}
+                          : 'Add a bill or monthly plan to set your intention'}
                       </small>
                       <Progress
                         aria-label="Monthly budget used"
@@ -1630,6 +1658,13 @@ function RecordForm({
           />
         </Field>
       )}
+      {d.kind === 'budget' && (
+        <p className="hint full">
+          Set your total target for this category. Scheduled bills and plans
+          appear automatically; the monthly planned amount uses whichever is
+          higher, so they are never counted twice.
+        </p>
+      )}
       <Field
         label={
           d.kind === 'budget'
@@ -1929,8 +1964,10 @@ function Budget({
     data.member,
   );
   const selected = rows.find((row) => row.category.id === selectedCategoryId);
-  const first = month + '-01';
-  const last = addDays(addMonths(first, 1), -1);
+  const selectedCategoryIdForRecords =
+    selected?.category.id === '__uncategorized__'
+      ? null
+      : selected?.category.id;
   const scopedRecords = data.records.filter((r) =>
     scope === 'shared' ? r.owner_id === null : r.owner_id === data.member.id,
   );
@@ -1938,25 +1975,20 @@ function Budget({
     ? scopedRecords.filter(
         (r) =>
           r.kind === 'transaction' &&
-          r.category_id === selected.category.id &&
-          r.date.startsWith(month),
+          r.category_id === selectedCategoryIdForRecords &&
+          budgetTransactionDate(r).startsWith(month),
       )
     : [];
-  const selectedPlans = selected
-    ? events(scopedRecords, first, last, data.jointEntries).filter(
-        (e) =>
-          e.record.category_id === selected.category.id &&
-          ['bill', 'subscription', 'debt', 'purchase'].includes(e.record.kind),
-      )
-    : [];
+  const selectedPlans = selected?.scheduledItems ?? [];
   const openPlanEditor = () => {
-    if (!selected) return;
+    if (!selected || selected.category.id === '__uncategorized__') return;
     setSelectedCategoryId(null);
     edit('budget', selected.budget, {
       scope,
       category_id: selected.category.id,
       title: selected.category.name + ' plan',
       date: month + '-01',
+      amount: selected.planned ? (selected.planned / 100).toFixed(2) : '',
     });
   };
   return (
@@ -2010,7 +2042,14 @@ function Budget({
                 <TableCell>
                   <b>{row.category.name}</b>
                 </TableCell>
-                <TableCell>{fmt(row.planned)}</TableCell>
+                <TableCell>
+                  {fmt(row.planned)}
+                  {row.scheduled > 0 && (
+                    <small className="table-note">
+                      {fmt(row.scheduled)} scheduled
+                    </small>
+                  )}
+                </TableCell>
                 <TableCell>{fmt(row.actual)}</TableCell>
                 <TableCell className={row.difference < 0 ? 'overdue' : ''}>
                   {fmt(row.difference)}
@@ -2031,9 +2070,11 @@ function Budget({
           <span>{fmt(rows.reduce((n, r) => n + r.actual, 0))} actual</span>
         </div>
         <p className="hint">
-          Select a category to see its plan, scheduled items, and recorded
-          spending. Positive difference means room left in the plan. A negative
-          difference means spending exceeded the plan.
+          Scheduled bills, subscriptions, debt payments, and purchases fill in
+          the plan automatically. You can set a higher category target for other
+          spending. The larger of the two becomes the planned amount, without
+          counting bills twice. Positive difference means room left; negative
+          means spending exceeded the plan.
         </p>
       </section>
       <Sheet
@@ -2075,17 +2116,27 @@ function Budget({
                 </div>
                 <section className="budget-detail-section">
                   <div className="section-heading">
-                    <h3>Monthly intention</h3>
-                    <button className="text-button" onClick={openPlanEditor}>
-                      <Pencil size={14} />
-                      {selected.budget ? 'Edit plan' : 'Add plan'}
-                    </button>
+                    <h3>Monthly target</h3>
+                    {selected.category.id !== '__uncategorized__' && (
+                      <button className="text-button" onClick={openPlanEditor}>
+                        <Pencil size={14} />
+                        {selected.budget ? 'Edit target' : 'Set target'}
+                      </button>
+                    )}
                   </div>
+                  <p className="hint">
+                    {fmt(selected.scheduled)} scheduled ·{' '}
+                    {selected.manual === null
+                      ? 'No manual target'
+                      : `${fmt(selected.manual)} manual target`}
+                  </p>
                   <p>
                     {selected.budget?.note ||
-                      (selected.budget
-                        ? 'No note added for this category.'
-                        : 'No monthly amount has been planned yet.')}
+                      (selected.category.id === '__uncategorized__'
+                        ? 'Assign these items a category to include them in a named plan.'
+                        : selected.budget
+                          ? 'No note added for this category.'
+                          : 'Set a target if you want room beyond scheduled items.')}
                   </p>
                 </section>
                 <section className="budget-detail-section">
@@ -2131,7 +2182,13 @@ function Budget({
                       >
                         <span>
                           <b>{transaction.title}</b>
-                          <small>{transaction.date}</small>
+                          <small>
+                            {transaction.source_id &&
+                            transaction.occurrence_date &&
+                            transaction.occurrence_date !== transaction.date
+                              ? `Due ${transaction.occurrence_date} · paid ${transaction.date}`
+                              : transaction.date}
+                          </small>
                         </span>
                         <strong>{fmt(transaction.amount_cents)}</strong>
                         <ChevronRight size={16} aria-hidden="true" />
@@ -2145,9 +2202,13 @@ function Budget({
                 </section>
               </div>
               <SheetFooter>
-                <button className="primary" onClick={openPlanEditor}>
-                  {selected.budget ? 'Edit monthly plan' : 'Plan this category'}
-                </button>
+                {selected.category.id !== '__uncategorized__' && (
+                  <button className="primary" onClick={openPlanEditor}>
+                    {selected.budget
+                      ? 'Edit monthly target'
+                      : 'Set monthly target'}
+                  </button>
+                )}
               </SheetFooter>
             </>
           )}
@@ -2552,6 +2613,7 @@ function SettingsView({
           </button>
         </form>
       </section>
+      <ApiKeysView />
       <section className="panel">
         <h2>A safe place to begin</h2>
         <p className="muted lower">
@@ -2582,5 +2644,140 @@ function SettingsView({
         </p>
       </section>
     </div>
+  );
+}
+
+type ApiKeyInfo = {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+};
+
+function ApiKeysView() {
+  const [keys, setKeys] = useState<ApiKeyInfo[]>([]);
+  const [name, setName] = useState('');
+  const [newKey, setNewKey] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const refreshKeys = useCallback(async () => {
+    const response = await fetch('/api/keys', { cache: 'no-store' });
+    const result = (await response.json()) as {
+      keys?: ApiKeyInfo[];
+      error?: string;
+    };
+    if (!response.ok) throw new Error(result.error ?? 'Could not load keys.');
+    setKeys(result.keys ?? []);
+  }, []);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void refreshKeys().catch((e: unknown) =>
+        setError(e instanceof Error ? e.message : 'Could not load keys.'),
+      );
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [refreshKeys]);
+
+  async function changeKey(method: 'POST' | 'DELETE', body: object) {
+    setBusy(true);
+    setError('');
+    try {
+      const response = await fetch('/api/keys', {
+        method,
+        headers: { 'Content-Type': 'application/json', 'X-Notebook': '1' },
+        body: JSON.stringify(body),
+      });
+      const result = (await response.json()) as {
+        key?: string;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(result.error ?? 'Key change failed.');
+      if (method === 'POST') {
+        setNewKey(result.key ?? '');
+        setName('');
+      } else setNewKey('');
+      await refreshKeys();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Key change failed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="panel">
+      <h2>API keys</h2>
+      <p className="hint">
+        A key can read and change everything available to your account,
+        including your private records and shared household data. Keep it
+        secret. Revoke it here if it is exposed.
+      </p>
+      <form
+        className="form-grid lower"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void changeKey('POST', { name });
+        }}
+      >
+        <Field label="Key name">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={60}
+            required
+            placeholder="My integration"
+          />
+        </Field>
+        <button className="primary full" disabled={busy}>
+          Create API key
+        </button>
+      </form>
+      {newKey && (
+        <div className="invite lower">
+          <Field label="New API key · shown only once">
+            <textarea
+              readOnly
+              rows={3}
+              value={newKey}
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          </Field>
+          <p className="hint">Copy it now. The app stores only its hash.</p>
+        </div>
+      )}
+      {error && (
+        <p role="alert" className="hint">
+          {error}
+        </p>
+      )}
+      {keys.map((key) => (
+        <div className="member-row" key={key.id}>
+          <div>
+            <b>{key.name}</b>
+            <small className="table-note">
+              {key.prefix}… · Last used{' '}
+              {key.last_used_at
+                ? new Date(key.last_used_at).toLocaleDateString()
+                : 'never'}
+            </small>
+          </div>
+          <button
+            type="button"
+            className="secondary"
+            disabled={busy}
+            onClick={() => void changeKey('DELETE', { id: key.id })}
+            aria-label={`Revoke ${key.name} API key`}
+          >
+            Revoke
+          </button>
+        </div>
+      ))}
+      <p className="hint lower">
+        Use <code>Authorization: Bearer YOUR_KEY</code> with{' '}
+        <code>/api/v1/notebook</code>. See the API guide for actions and
+        examples.
+      </p>
+    </section>
   );
 }

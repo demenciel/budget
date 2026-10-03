@@ -305,6 +305,128 @@ void test('monthly category review separates shared totals and private spending'
   );
 });
 
+void test('monthly budget includes scheduled commitments without double counting a manual target', () => {
+  const rent = record({
+    id: 'rent',
+    date: '2025-12-31',
+    amount_cents: 80000,
+  });
+  const subscription = record({
+    id: 'subscription',
+    kind: 'subscription',
+    date: '2026-01-10',
+    amount_cents: 2000,
+    frequency: 'weekly',
+  });
+  const privateBill = record({
+    id: 'private',
+    owner_id: 'a',
+    date: '2026-01-01',
+    amount_cents: 5000,
+  });
+  const paid = record({
+    id: 'payment',
+    kind: 'transaction',
+    date: '2026-01-15',
+    amount_cents: 80000,
+    source_id: 'rent',
+    occurrence_date: '2026-01-31',
+  });
+  const scheduled = budgetRows(
+    [rent, subscription, privateBill, paid],
+    [category],
+    '2026-01',
+    'shared',
+    me,
+  )[0];
+  assert.equal(scheduled.scheduled, 88000);
+  assert.equal(scheduled.planned, 88000);
+  assert.equal(scheduled.actual, 80000);
+  assert.equal(scheduled.difference, 8000);
+
+  const target = record({
+    id: 'target',
+    kind: 'budget',
+    date: '2026-01-01',
+    amount_cents: 100000,
+  });
+  const withTarget = budgetRows(
+    [rent, subscription, target],
+    [category],
+    '2026-01',
+    'shared',
+    me,
+  )[0];
+  assert.equal(withTarget.planned, 100000);
+  assert.equal(withTarget.scheduled, 88000);
+  assert.equal(
+    budgetRows(
+      [rent, subscription, record({ ...target, amount_cents: 30000 })],
+      [category],
+      '2026-01',
+      'shared',
+      me,
+    )[0].planned,
+    88000,
+  );
+  assert.equal(
+    budgetRows(
+      [rent, subscription, privateBill],
+      [category],
+      '2026-01',
+      'mine',
+      me,
+    )[0].planned,
+    5000,
+  );
+});
+
+void test('uncategorized bills appear in the monthly budget', () => {
+  const bill = record({ category_id: null, date: '2026-01-05' });
+  const rows = budgetRows([bill], [category], '2026-01', 'shared', me);
+  assert.equal(
+    rows.find((row) => row.category.name === 'Uncategorized')?.planned,
+    10001,
+  );
+});
+
+void test('only active commitments due in the selected month fill the budget', () => {
+  const purchase = record({
+    id: 'purchase',
+    kind: 'purchase',
+    frequency: 'once',
+    date: '2026-03-08',
+    amount_cents: 12000,
+  });
+  const ended = record({
+    id: 'ended',
+    date: '2026-01-05',
+    end_date: '2026-02-05',
+    amount_cents: 9000,
+  });
+  const paused = record({
+    id: 'paused',
+    date: '2026-01-05',
+    completed: 1,
+    amount_cents: 5000,
+  });
+  const goal = record({
+    id: 'goal',
+    kind: 'goal',
+    frequency: 'once',
+    date: '2026-03-08',
+    amount_cents: 50000,
+  });
+  const rows = budgetRows(
+    [purchase, ended, paused, goal],
+    [category],
+    '2026-03',
+    'shared',
+    me,
+  );
+  assert.equal(rows[0].planned, 12000);
+});
+
 void test('older opening snapshots roll forward into the requested coming-year window', () => {
   const salary = record({
     id: 'pay',

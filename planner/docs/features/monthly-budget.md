@@ -10,7 +10,7 @@ Select a month, choose Mine or Shared, then use a category pencil to enter the p
 
 ## Data and behavior
 
-Budget records are dated the first day of their month. Partial unique indexes prevent duplicate plans in one household/owner/category/month. Actuals are transactions in that month and exact ownership scope. Reimbursements do not count as spending. Positive differences mean remaining room; negative differences mean overspend.
+Budget records are dated the first day of their month. Partial unique indexes prevent duplicate plans in one household/owner/category/month. Scheduled bills, subscriptions, debt payments, and planned purchases fill the planned column; an editable manual category target can raise it without counting commitments twice. Actuals use transactions in the selected ownership scope. A payment linked to a bill or plan belongs to its scheduled occurrence month in the budget, even when paid early or late; the transaction journal keeps the date money moved. Other transactions belong to their payment month. Reimbursements do not count as spending. Positive differences mean remaining room; negative differences mean overspend.
 
 ## Safe changes and boundaries
 

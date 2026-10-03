@@ -10,7 +10,13 @@ import {
   type Database,
   type Statement,
 } from '../lib/service.ts';
-import { today, addDays, jointSummary, reimbursement } from '../lib/domain.ts';
+import {
+  today,
+  addMonths,
+  budgetRows,
+  jointSummary,
+  reimbursement,
+} from '../lib/domain.ts';
 class Sqlite implements Database {
   raw = new DatabaseSync(':memory:');
   constructor() {
@@ -408,7 +414,7 @@ void test('demo is opt-in, creates linked paid rent and cannot be added twice', 
 
 void test('early bill payment keeps the actual date and scheduled occurrence separate', async () => {
   const { db, a } = await household();
-  const due = addDays(today(), 10);
+  const due = addMonths(today().slice(0, 7) + '-01', 1);
   await save(db, alex, {
     ...expense,
     kind: 'bill',
@@ -429,6 +435,29 @@ void test('early bill payment keeps the actual date and scheduled occurrence sep
   )!;
   assert.equal(payment.date, today());
   assert.equal(payment.occurrence_date, due);
+  const notebook = await loadNotebook(db, a);
+  const dueMonth = budgetRows(
+    notebook.records,
+    notebook.categories,
+    due.slice(0, 7),
+    'shared',
+    a,
+  );
+  assert.equal(
+    dueMonth.find((row) => row.category.name === 'Uncategorized')?.actual,
+    bill.amount_cents,
+  );
+  const paymentMonth = budgetRows(
+    notebook.records,
+    notebook.categories,
+    today().slice(0, 7),
+    'shared',
+    a,
+  );
+  assert.equal(
+    paymentMonth.reduce((sum, row) => sum + row.actual, 0),
+    0,
+  );
   db.raw.close();
 });
 

@@ -280,6 +280,13 @@ export function reimbursement(records: RecordItem[], member: Member) {
       return n;
     }, 0);
 }
+export function budgetTransactionDate(
+  record: Pick<RecordItem, 'date' | 'source_id' | 'occurrence_date'>,
+) {
+  return record.source_id && record.occurrence_date
+    ? record.occurrence_date
+    : record.date;
+}
 export function budgetRows(
   records: RecordItem[],
   categories: Category[],
@@ -287,24 +294,61 @@ export function budgetRows(
   scope: string,
   member: Member,
 ) {
-  const filtered = records.filter(
-    (r) =>
-      r.date.startsWith(month) &&
-      (scope === 'shared' ? r.owner_id === null : r.owner_id === member.id),
+  const scoped = records.filter((r) =>
+    scope === 'shared' ? r.owner_id === null : r.owner_id === member.id,
   );
-  return categories.map((category) => {
+  const filtered = scoped.filter((r) =>
+    (r.kind === 'transaction' ? budgetTransactionDate(r) : r.date).startsWith(
+      month,
+    ),
+  );
+  const first = month + '-01';
+  const last = addDays(addMonths(first, 1), -1);
+  const scheduled = events(scoped, first, last).filter((event) =>
+    ['bill', 'subscription', 'debt', 'purchase'].includes(event.record.kind),
+  );
+  const hasUncategorized =
+    scheduled.some((event) => !event.record.category_id) ||
+    filtered.some(
+      (record) => !record.category_id && record.kind === 'transaction',
+    );
+  const displayedCategories = hasUncategorized
+    ? [
+        ...categories,
+        {
+          id: '__uncategorized__',
+          household_id: member.household_id,
+          name: 'Uncategorized',
+        },
+      ]
+    : categories;
+  return displayedCategories.map((category) => {
+    const categoryId = category.id === '__uncategorized__' ? null : category.id;
     const budget = filtered.find(
-      (r) => r.kind === 'budget' && r.category_id === category.id,
+      (r) => r.kind === 'budget' && r.category_id === categoryId,
+    );
+    const scheduledItems = scheduled.filter(
+      (event) => event.record.category_id === categoryId,
+    );
+    const scheduledAmount = scheduledItems.reduce(
+      (total, event) => total + event.record.amount_cents,
+      0,
     );
     const actual = filtered
-      .filter((r) => r.kind === 'transaction' && r.category_id === category.id)
+      .filter((r) => r.kind === 'transaction' && r.category_id === categoryId)
       .reduce((n, r) => n + r.amount_cents, 0);
+    // A manually entered category target already includes its bills. Use the
+    // larger amount so scheduled commitments appear without double counting.
+    const planned = Math.max(budget?.amount_cents ?? 0, scheduledAmount);
     return {
       category,
       budget,
-      planned: budget?.amount_cents ?? 0,
+      manual: budget?.amount_cents ?? null,
+      scheduled: scheduledAmount,
+      scheduledItems,
+      planned,
       actual,
-      difference: (budget?.amount_cents ?? 0) - actual,
+      difference: planned - actual,
     };
   });
 }
